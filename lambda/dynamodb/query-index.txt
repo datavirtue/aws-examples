@@ -1,3 +1,39 @@
+// I have an Amazon API Gateway GET method/resource that takes two paramters, email and timestamp
+// this feeds into a Lambda integration request where the following script is used in the body mapping template to send through the paramters (all or any)
+
+##  See http://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-mapping-template-reference.html
+##  This template will pass through all parameters including path, querystring, header, stage variables, and context through to the integration endpoint via the body/payload
+#set($allParams = $input.params())
+{
+"body-json" : $input.json('$'),
+"params" : {
+#foreach($type in $allParams.keySet())
+    #set($params = $allParams.get($type))
+"$type" : {
+    #foreach($paramName in $params.keySet())
+    "$paramName" : "$util.escapeJavaScript($params.get($paramName))"
+        #if($foreach.hasNext),#end
+    #end
+}
+    #if($foreach.hasNext),#end
+#end
+},
+"stage-variables" : {
+#foreach($key in $stageVariables.keySet())
+"$key" : "$util.escapeJavaScript($stageVariables.get($key))"
+    #if($foreach.hasNext),#end
+#end
+}
+}
+
+/*  
+
+	Node.js Labmda function that gets fed from API Gatewat integration request
+	Notice the event.params and how it maps to the GET query string that was established in the GET resource of the API Gateway (not shown here)
+
+
+ */
+
 exports.handler = function(event, context, callback){ 
 
 /*
@@ -6,14 +42,27 @@ exports.handler = function(event, context, callback){
  
 */
 
-var doc = require('dynamodb-doc');
-var dynamo = new doc.DynamoDB();
-   
+//var doc = require('dynamodb-doc');
+//var dynamo = new doc.DynamoDB();
+  
+console.log('Body:', event.body);
+  console.log('Headers:', event.headers);
+  console.log('Method:', event.method);
+  console.log('Params:', event.params);
+  console.log('Query:', event.query);
+  console.log('parsed:', JSON.stringify(event));
+  //console.log('EMAIL :', event.params.querystring.email)
+ // console.log('TIMESTAMP :', event.params.querystring.timestamp)
+
 var AWS = require('aws-sdk');
-var docClient = new AWS.DynamoDB.DocumentClient();
+var dynamo = new AWS.DynamoDB.DocumentClient();
 
 /*  */
 
+// TODO: check for missing required paramteres and return a sensible error
+
+var email = event.params.querystring.email;
+var timestamp = parseInt(event.params.querystring.timestamp);
 
 var params = {
     TableName: "DeliveredEvents",
@@ -24,8 +73,8 @@ var params = {
         "#date":"timestamp"
         },
     ExpressionAttributeValues: {
-        ":emailValue" : "gregg@gpgnetworking.com",
-        ":dateValue" : 1482988277
+        ":emailValue" : email,
+        ":dateValue" : timestamp
         }
     };
 
