@@ -42,10 +42,15 @@ exports.handler = function(event, context, callback){
  
 */
 
+//Method 1
 //var doc = require('dynamodb-doc');
 //var dynamo = new doc.DynamoDB();
-  
-console.log('Body:', event.body);
+//Method 2
+var AWS = require('aws-sdk');
+var dynamo = new AWS.DynamoDB.DocumentClient();
+
+/*
+  console.log('Body:', event.body);
   console.log('Headers:', event.headers);
   console.log('Method:', event.method);
   console.log('Params:', event.params);
@@ -54,9 +59,7 @@ console.log('Body:', event.body);
   console.log('EMAIL :', event.params.querystring.email);
   console.log('STARTDATE :', event.params.querystring.startDate)
   console.log('ENDDATE :', event.params.querystring.endDate)
-
-var AWS = require('aws-sdk');
-var dynamo = new AWS.DynamoDB.DocumentClient();
+*/
 
 /*  */
 
@@ -69,10 +72,12 @@ var endDate = parseInt((new Date(event.params.querystring.endDate).getTime() / 1
 var params = {
     TableName: "DeliveredEvents",
     IndexName: "email-timestamp-index",
+    ProjectionExpression: "email, #date, category, #emailResponse",
     KeyConditionExpression:"#email = :emailValue AND #date BETWEEN :startDate AND :endDate ",
     ExpressionAttributeNames: {
         "#email":"email",
-        "#date":"timestamp"
+        "#date":"timestamp",
+        "#emailResponse" : "response"
         },
     ExpressionAttributeValues: {
         ":emailValue" : email,
@@ -81,10 +86,61 @@ var params = {
         }
     };
 
+// TODO: Handle DynamoDB pagination
+
 dynamo.query(params, function(err, data) {
     if (err) console.log(err); // an error occurred
     else console.log(data); // successful response
-    callback(null, data);
+    
+    
+    //create new object to return processed results
+    var newData = {
+        
+        "DeliveredEmailEvents" : [],
+        "Count" : data.Count,
+        "ScannedCount": data.ScannedCount
+        
+    };
+    
+    //get the items from the dynamo search results
+    var items = data.Items;    
+    
+    
+    //iterate through the results and convert unix timestamps to date/time string
+    for (var j = 0; j < items.length; j++){
+        
+        var item = items[j];
+        
+        /*  */
+        var d = new Date(item.timestamp * 1000);
+        //played hell trying to inline the ternary operator
+        var day = d.getDate().toString().length < 2 ? "0"+(d.getDate().toString()) : d.getDate().toString();
+        var month = d.getMonth().toString().length < 2 ? "0"+(d.getMonth().toString()) : d.getMonth().toString();
+        var hour =  d.getHours().toString().length < 2 ? "0"+(d.getHours().toString()) : d.getHours().toString();
+        var minute = d.getMinutes().toString().length < 2 ? "0"+(d.getMinutes().toString()) : d.getMinutes().toString();
+        var second = d.getSeconds().toString().length < 2 ? "0"+(d.getSeconds().toString()) : d.getSeconds().toString();
+        
+        
+        // flatten out the categories a bit
+        var categories = [];
+        var category = item.category.values;
+        
+        for (var i = 0; i < item.category.values.length; i++){
+                categories.push(category[i]);
+        }
+        
+        newData.Items.push(
+            {
+                "category" : categories,
+                "response" : item.response,
+                "email" : item.email,
+                "datetime" : d.getFullYear() + "-" + month +  "-" + day + " " + hour + ":" + minute + ":" + second
+            }
+        );
+    }
+    
+    //return the processed results to the user 
+    callback(null, newData);
 });
 
 
