@@ -1,4 +1,4 @@
-// I have an Amazon API Gateway GET method/resource that takes two paramters, email and timestamp
+// I have an Amazon API Gateway GET method/resource that takes three paramters, email, start date, and end date
 // this feeds into a Lambda integration request where the following script is used in the body mapping template to send through the paramters (all or any)
 
 ##  See http://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-mapping-template-reference.html
