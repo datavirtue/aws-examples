@@ -51,8 +51,9 @@ console.log('Body:', event.body);
   console.log('Params:', event.params);
   console.log('Query:', event.query);
   console.log('parsed:', JSON.stringify(event));
-  //console.log('EMAIL :', event.params.querystring.email)
- // console.log('TIMESTAMP :', event.params.querystring.timestamp)
+  console.log('EMAIL :', event.params.querystring.email);
+  console.log('STARTDATE :', event.params.querystring.startDate)
+  console.log('ENDDATE :', event.params.querystring.endDate)
 
 var AWS = require('aws-sdk');
 var dynamo = new AWS.DynamoDB.DocumentClient();
@@ -62,19 +63,21 @@ var dynamo = new AWS.DynamoDB.DocumentClient();
 // TODO: check for missing required paramteres and return a sensible error
 
 var email = event.params.querystring.email;
-var timestamp = parseInt(event.params.querystring.timestamp);
+var startDate = parseInt((new Date(event.params.querystring.startDate).getTime() / 1000).toFixed(0));
+var endDate = parseInt((new Date(event.params.querystring.endDate).getTime() / 1000).toFixed(0));
 
 var params = {
     TableName: "DeliveredEvents",
     IndexName: "email-timestamp-index",
-    KeyConditionExpression:"#email = :emailValue and #date >= :dateValue",
+    KeyConditionExpression:"#email = :emailValue AND #date BETWEEN :startDate AND :endDate ",
     ExpressionAttributeNames: {
         "#email":"email",
         "#date":"timestamp"
         },
     ExpressionAttributeValues: {
         ":emailValue" : email,
-        ":dateValue" : timestamp
+        ":startDate" : startDate,
+        ":endDate" : endDate
         }
     };
 
