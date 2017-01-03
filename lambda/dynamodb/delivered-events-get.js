@@ -271,15 +271,14 @@ function processResults(err, data) {
                     
                     
                     /* Make the assumption that a number is the dealer code and exclude from the categories */
-                    if (isNaN(categories[i])){
+                    if (isNaN(obj)){
                     
-                        newCategories.push(categories[i]);
-                        //console.log(categories[i]);
+                        newCategories.push(obj);
                         
                     }else {
                         
                         //do not type cast the dealer code as a number, for it is a lowly identifier (like a phone number or SSN)
-                        dealerCode = categories[i];
+                        dealerCode = obj;
                     }        
                        
                         
@@ -324,6 +323,7 @@ function processResults(err, data) {
            
        }else {
              
+             delete newData.LastEvaluatedKey;
              callback(null, newData);     
              
         }
