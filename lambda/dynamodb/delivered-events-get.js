@@ -7,11 +7,12 @@ exports.handler = function(event, context, callback){
 */
 
 //Method 1
-//var doc = require('dynamodb-doc');
-//var dynamo = new doc.DynamoDB();
-//Method 2
-var AWS = require('aws-sdk');
-var dynamo = new AWS.DynamoDB.DocumentClient();
+var doc = require('dynamodb-doc');
+var dynamo = new doc.DynamoDB();
+
+/* Method 2 - This caused severe garbage collection problems when the result set sizes increased. */
+//var AWS = require('aws-sdk');
+//var dynamo = new AWS.DynamoDB.DocumentClient();
 
 /*
   console.log('Body:', event.body);
@@ -19,29 +20,119 @@ var dynamo = new AWS.DynamoDB.DocumentClient();
   console.log('Method:', event.method);
   console.log('Params:', event.params);
   console.log('Query:', event.query);
-  console.log('parsed:', JSON.stringify(event));  */
+  console.log('parsed:', JSON.stringify(event));  
   console.log('EMAIL :', event.params.querystring.email);
   console.log('STARTDATE :', event.params.querystring.startDate)
   console.log('ENDDATE :', event.params.querystring.endDate)
+  */
 
-
+var error = {};
 /*  check for missing required paramteres and return a sensible error */
 
 if (event.params.querystring.startDate === undefined || event.params.querystring.endDate === undefined ){
     
-    var error = {
+    error = {
         
         "error" : "startDate and endDate are REQUIRED",
         "help" : "?startDate=2000-01-01&endDate=2000-02-01",
-        "notes" : "Parameters: email, startDate, and endDate: email is not required, ommitting it will return all email events between the start and end date"
+        "notes" : "Required Parameters: startDate, endDate: Optional: email (ommitting it will return all email events between the start and end date)"
         
     };
     callback(null, error);
     return;
+} else if (event.params.querystring.table === undefined) {
+    
+    error = {
+        
+        "error" : "table paramter is REQUIRED (if this error appeared from a previously working query please contact system administrator)",
+        "help" : "?table=DeliveredEvents",
+        "notes" : "Required Parameters: table, startDate, endDate: Optional: email (ommitting it will return all email events between the start and end date)"
+        
+    };
+    callback(null, error);
+    return;
+    
 }
+
+/* Set up a mapping to configure the search queries based on the available columns in the result set.  Projections are limited and varied.  */
+var dynamoTables = [
+    
+    {"table": "BounceEvents",       "project" : "email, #date, category, reason, #eventType", 
+    "ExprAttributes" : {
+            "#email" : "email",
+            "#date":"timestamp",    //the expression attributes must satisfy the project attributes that have a hash tag
+            "#eventType" : "type"
+            } },
+    
+    {"table": "DeferredEvents",     "project" : "email, #date, category, #emailResponse", 
+    "ExprAttributes" : {
+            "#email":"email",
+            "#date":"timestamp",
+            "#eventType" : "type"
+            } },
+    
+    {"table": "DeliveredEvents",    "project" : "email, #date, category", 
+        "ExprAttributes" : {
+            "#email":"email",
+            "#date":"timestamp"
+            } 
+    },
+    
+    {"table": "DroppedEvents",      "project" : "email, #date, category, reason",  
+    "ExprAttributes" : {
+            "#email":"email",
+            "#date":"timestamp",
+            "#eventType" : "type"
+            } },
+    
+    {"table": "SpamReportEvents",   "project" : "email, #date, category",  
+    "ExprAttributes" : {
+            "#email":"email",
+            "#date":"timestamp",
+            "#eventType" : "type"
+            }  }
+];
+
+
+/* 
+
+    Prime the query expression variables based on the table parameter passed in by the user. 
+
+*/
+
+var table = "";
+var project = "";
+var expressionAttributes = {};
+
+for (var t = 0; t < dynamoTables.length; t++){
+    
+    if (dynamoTables[t].table == event.params.querystring.table){
+        
+        table = dynamoTables[t].table;
+        project = dynamoTables[t].project;
+        expressionAttributes = dynamoTables[t].ExprAttributes;
+        
+    }
+}
+
+if (table === ""){
+        
+        error = {
+        
+            "error" : "table paramter is INVALID (if this error appeared from a previously working query please contact system administrator)",
+            "help" : "?table=DeliveredEvents",
+            "notes" : "Required Parameters: table, startDate, endDate: Optional: email (ommitting it will return all email events between the start and end date)"
+        
+        };
+        callback(null, error);
+        return;
+        
+    }
 
 
 var email = event.params.querystring.email;
+
+/* Convert start and end date to Unix Epoch timestamps -- from the date text parameters passed by the user */
 var startDate = parseInt((new Date(event.params.querystring.startDate).getTime() / 1000).toFixed(0));
 var endDate = parseInt((new Date(event.params.querystring.endDate).getTime() / 1000).toFixed(0));
 
@@ -49,45 +140,42 @@ var params = {};
 
 if (event.params.querystring.email){
     
-    /* return emails in date reange for a specific email address */
+    /* return emails in date range for a specific email address */
     params = {
-        TableName: "DeliveredEvents",
+        TableName: table,
         IndexName: "email-timestamp-index",
-        ProjectionExpression: "email, #date, category, #emailResponse",
+        ProjectionExpression: project,
         KeyConditionExpression:"#email = :emailValue AND #date BETWEEN :startDate AND :endDate ",
-        ExpressionAttributeNames: {
-            "#email":"email",
-            "#date":"timestamp",
-            "#emailResponse" : "response"
-            },
+        ExpressionAttributeNames: expressionAttributes,
         ExpressionAttributeValues: {
             ":emailValue" : email,
             ":startDate" : startDate,
             ":endDate" : endDate
-            }
+            },
+        Limit : 1500
     };
     
 }else {
     
+    delete expressionAttributes["#email"];
+    
     /* return all emails in date range */
     params = {
-        TableName: "DeliveredEvents",
+        TableName: table,
         IndexName: "timestamp-index",
-        ProjectionExpression: "email, #date, category, #emailResponse",
-        KeyConditionExpression:"#date BETWEEN :startDate AND :endDate ",
-        ExpressionAttributeNames: {
-            "#date":"timestamp",
-            "#emailResponse" : "response"
-            },
+        ProjectionExpression: project,
+        FilterExpression:"#date BETWEEN :startDate AND :endDate ",
+        ExpressionAttributeNames: expressionAttributes,
         ExpressionAttributeValues: {
             ":startDate" : startDate,
             ":endDate" : endDate
-            }
+            },
+        Limit : 1500
     };
     
 }
 
-/* change function call logic...currently redundant */
+/* change dynamo search type based on paramters */
 var operation ="";
 if (event.params.querystring.email) {
     
@@ -95,75 +183,158 @@ if (event.params.querystring.email) {
     
 }else {
     
-    operation = "query";
+    operation = "scan";
     
 }
 
-// TODO: Handle DynamoDB pagination
 
-dynamo[operation](params, function(err, data) {
-    if (err) { 
-        console.log(err); // an error occurred
-        callback(null, err);
-        return;
-    }
-    else  {
-        
-        console.log(data); // successful response
-    }
-    
-    
-    //create new object to return processed results
+
+//create new object to return processed results
     var newData = {
         
-        "DeliveredEmailEvents" : [],
-        "Count" : data.Count,
-        "ScannedCount": data.ScannedCount
-        
-    };
+        "EmailEvents" : [],
+        "LastEvaluatedKey" : {}    };
+
+
+q(null);   
+
+
+function q(lastKey) {
     
-    //get the items from the dynamo search results
-    var items = data.Items;    
-    
-    
-    //iterate through the results and convert unix timestamps to date/time string
-    for (var j = 0; j < items.length; j++){
+    if (lastKey != null ) {
         
-        var item = items[j];
-        
-        /*  */
-        var d = new Date(item.timestamp * 1000);
-        //played hell trying to inline the ternary operator
-        var day = d.getDate().toString().length < 2 ? "0"+(d.getDate().toString()) : d.getDate().toString();
-        var month = (d.getMonth()+1).toString().length < 2 ? "0"+((d.getMonth()+1).toString()) : (d.getMonth()+1).toString();
-        var hour =  d.getHours().toString().length < 2 ? "0"+(d.getHours().toString()) : d.getHours().toString();
-        var minute = d.getMinutes().toString().length < 2 ? "0"+(d.getMinutes().toString()) : d.getMinutes().toString();
-        var second = d.getSeconds().toString().length < 2 ? "0"+(d.getSeconds().toString()) : d.getSeconds().toString();
-        
-        
-        // flatten out the categories a bit
-        var categories = [];
-        var category = item.category.values;
-        
-        for (var i = 0; i < item.category.values.length; i++){
-                categories.push(category[i]);
-        }
-        
-        //create final JSON for user consumption
-        newData.DeliveredEmailEvents.push(
-            {
-                "Event" : "Delivered",
-                "EventReason" : "",
-                "Category" : categories,
-                "Email" : item.email,
-                "Datetime" : d.getFullYear() + "-" + month +  "-" + day + " " + hour + ":" + minute + ":" + second
-            }
-        );
+        params.ExclusiveStartKey = lastKey;
     }
     
-    //return the processed results to the user 
-    callback(null, newData);
-});
+    dynamo[operation](params, processResults);
+    
+}
+
+
+function processResults(err, data) {
+        if (err) { 
+            console.log(err); // an error occurred
+            callback(null, err);
+            return;
+        }
+        else  {
+            //callback(null, data);
+            //console.log(data.category); // successful response
+        }
+        
+        //get the items from the dynamo search results
+        var items = data.Items;  
+        var item = {};
+        var dealerCode = "";
+        var newCategories = [];
+        var categories = [];
+        var event = "";
+        var eventReason = "";
+        var eventType = "";
+        
+        /* ************************************
+        
+            ***** Data processing loop ***** 
+            
+        * *************************************/
+        
+        for (var j = 0; j < items.length; j++){
+            
+            item = items[j];
+            
+            
+            var d = new Date(item.timestamp * 1000);
+            
+            var day = d.getDate().toString().length < 2 ? "0"+(d.getDate().toString()) : d.getDate().toString();
+            var month = (d.getMonth()+1).toString().length < 2 ? "0"+((d.getMonth()+1).toString()) : (d.getMonth()+1).toString();
+            var hour =  d.getHours().toString().length < 2 ? "0"+(d.getHours().toString()) : d.getHours().toString();
+            var minute = d.getMinutes().toString().length < 2 ? "0"+(d.getMinutes().toString()) : d.getMinutes().toString();
+            var second = d.getSeconds().toString().length < 2 ? "0"+(d.getSeconds().toString()) : d.getSeconds().toString();
+            
+            newCategories = [];
+            
+            // flatten out the categories a bit
+            if (item.category.contents) {
+                
+                //console.log(item.category.values.length);
+                
+                categories = item.category.contents;
+                
+            }
+            
+            
+            for (var key in categories) { 
+                
+                if (categories.hasOwnProperty(key)) {
+                    
+                    var obj = categories[key];
+                    
+                    
+                    /* Make the assumption that a number is the dealer code and exclude from the categories */
+                    if (isNaN(categories[i])){
+                    
+                        newCategories.push(categories[i]);
+                        //console.log(categories[i]);
+                        
+                    }else {
+                        
+                        //do not type cast the dealer code as a number, for it is a lowly identifier (like a phone number or SSN)
+                        dealerCode = categories[i];
+                    }        
+                       
+                        
+                    }
+                }
+            
+            
+            /* Following the naming conventions of EventNameEvents strip the Events word to yield EventName  */
+            event = table.replace("Events","");
+            
+            eventReason = "";
+            if (item.reason) {
+                
+                eventReason = item.reason;
+            }
+            
+            eventType = "";
+            if (item.type) {
+                
+                eventType = item.type;
+            }
+            
+            
+            //create final JSON for user consumption
+            newData.EmailEvents.push(
+                {
+                    "Event"         : event,
+                    "EventReason"   : eventReason,
+                    "EventType"     : eventType,
+                    "DealerCode"    : dealerCode,
+                    "Category"      : newCategories,
+                    "Email"         : item.email,
+                    "Datetime"      : d.getFullYear() + "-" + month +  "-" + day + " " + hour + ":" + minute + ":" + second
+                }
+            );
+        }
+        
+       
+       if (data.LastEvaluatedKey != null){
+           
+           q(data.LastEvaluatedKey);
+           
+       }else {
+             
+             callback(null, newData);     
+             
+        }
+       
+      
+    }
+
+
+
+
+ 
 
 
 }
