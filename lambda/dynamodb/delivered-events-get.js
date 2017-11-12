@@ -1,3 +1,10 @@
+/* 
+	Example javascript AWS Lambda function to query DynamoDB tables.
+	This was called from an API Gateway instance.
+	
+*/
+
+
 exports.handler = function(event, context, callback){ 
 
 /*
